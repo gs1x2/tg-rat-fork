@@ -27,6 +27,9 @@ Use "<b>/start</b>" to show list of available commands.
 | 📶 Get Wi-Fi Access Points            | Gets WI-FI Access Points with BSSID (Can be used to get location!)|
 | 🗃️ File management          | Complete access to all files on the victim's PC|
 | 🗃️ Task management          | Complete access to all processes on the victim's PC|
+| 🕑 Export Browser History             | Export Chrome/Edge browser history as raw file or archive |
+| ⌨️  Get Keylogger Log                 | Download or clear keylogger log file                     |
+| 🟢 Enable Keylogger / 🔴 Disable Keylogger | Enable or disable keylogger in real time             |
 
 
 ## 📎 Features
@@ -35,6 +38,15 @@ Use "<b>/start</b>" to show list of available commands.
 * The rat automatically copies itself to another folder and adds itself to the PC startup
 * The rat is fully controllable by the telegram bot
 * Updated to the latest library versions
+* Export browser history (Chrome/Edge) as raw file or archive
+* Keylogger:
+  * Logs all keystrokes (with layout awareness, readable text)
+  * Log file is persistent and survives reboots
+  * Log file size limit (configurable, default 30MB)
+  * Download or clear log file from bot menu
+  * Enable/disable keylogger from bot menu
+  * Log format: system keys and text on separate lines, timestamps for inactivity, layout changes marked
+  * Automatic notification in bot if new activity appears after a long pause (interval configurable)
 
 
 ## How to setup

